@@ -1,8 +1,7 @@
-package pkg
+package data
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -31,15 +30,7 @@ func CreateLoopBack(ctx context.Context, options ...LoopBackOption) (*LoopBack, 
 	return loopBack, nil
 }
 
-func (loopback *LoopBack) AttachDataChannel(datachannel *webrtc.DataChannel) error {
-	if loopback.dataChannel == nil {
-		loopback.dataChannel = datachannel
-		return nil
-	}
-	return errors.New("datachannel already attached")
-}
-
-func (loopback *LoopBack) Start() {
+func (loopback *LoopBack) start() {
 	go loopback.loop()
 }
 
@@ -70,10 +61,12 @@ func (loopback *LoopBack) loop() {
 	}
 }
 
-func (loopback *LoopBack) Close() {
+func (loopback *LoopBack) Close() error {
 	if loopback.udpListener != nil {
-		loopback.udpListener.Close()
+		return loopback.udpListener.Close()
 	}
+
+	return nil
 }
 
 func (loopback *LoopBack) Send(message []byte) error {

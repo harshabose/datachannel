@@ -1,4 +1,4 @@
-package pkg
+package data
 
 const (
 	DefaultBindPort     = 14551
