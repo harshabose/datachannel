@@ -79,20 +79,18 @@ func (dataChannel *DataChannel) onMessage() *DataChannel {
 // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 type DataChannels struct {
-	peerConnection *webrtc.PeerConnection
-	datachannel    map[string]*DataChannel
-	ctx            context.Context
+	datachannel map[string]*DataChannel
+	ctx         context.Context
 }
 
-func CreateDataChannels(ctx context.Context, peerConnection *webrtc.PeerConnection) (*DataChannels, error) {
+func CreateDataChannels(ctx context.Context) (*DataChannels, error) {
 	return &DataChannels{
-		peerConnection: peerConnection,
-		datachannel:    map[string]*DataChannel{},
-		ctx:            ctx,
+		datachannel: map[string]*DataChannel{},
+		ctx:         ctx,
 	}, nil
 }
 
-func (dataChannels *DataChannels) New(label string, options ...LoopBackOption) error {
+func (dataChannels *DataChannels) CreateDataChannel(label string, peerConnection *webrtc.PeerConnection, options ...LoopBackOption) error {
 	var (
 		loopback *LoopBack
 		err      error
@@ -101,7 +99,7 @@ func (dataChannels *DataChannels) New(label string, options ...LoopBackOption) e
 	if loopback, err = CreateLoopBack(dataChannels.ctx, options...); err != nil {
 		return err
 	}
-	if dataChannels.datachannel[label], err = CreateDataChannel(dataChannels.ctx, label, dataChannels.peerConnection, loopback); err != nil {
+	if dataChannels.datachannel[label], err = CreateDataChannel(dataChannels.ctx, label, peerConnection, loopback); err != nil {
 		return err
 	}
 
