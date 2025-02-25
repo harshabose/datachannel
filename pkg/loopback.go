@@ -3,34 +3,43 @@ package data
 import (
 	"context"
 	"fmt"
-	"net"
-	"time"
-
 	"github.com/pion/webrtc/v4"
+	"net"
+	"os/exec"
 )
 
 type LoopBack struct {
 	dataChannel  *webrtc.DataChannel
-	udpListener  *net.UDPConn
-	loopBackPort *net.UDPAddr
+	bindPortConn *net.UDPConn
+	remotePort   *net.UDPAddr
+	mavp2p       *exec.Cmd
 	ctx          context.Context
 }
 
 func CreateLoopBack(ctx context.Context, options ...LoopBackOption) (*LoopBack, error) {
-	loopBack := &LoopBack{
+	loopback := &LoopBack{
 		ctx: ctx,
 	}
 
 	for _, option := range options {
-		if err := option(loopBack); err != nil {
+		if err := option(loopback); err != nil {
 			return nil, err
 		}
 	}
 
-	return loopBack, nil
+	if loopback.bindPortConn == nil {
+		if err := WithRandomBindPort(loopback); err != nil {
+			return nil, err
+		}
+	}
+
+	return loopback, nil
 }
 
 func (loopback *LoopBack) start() {
+	if err := loopback.mavp2p.Start(); err != nil {
+		fmt.Printf("Error starting mavp2p loopback: %v... Skipping\n", err)
+	}
 	go loopback.loop()
 }
 
@@ -48,12 +57,6 @@ func (loopback *LoopBack) loop() {
 			return
 		default:
 
-			if loopback.udpListener == nil {
-				fmt.Println("Bind port not yet detected. Sleeping for 0.1 second...")
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-
 			if buffer, nRead = loopback.readMessageFromUDPPort(); nRead > 0 && nRead < 1025 {
 				loopback.sendMessageThroughDataChannel(buffer[:nRead])
 			}
@@ -62,8 +65,16 @@ func (loopback *LoopBack) loop() {
 }
 
 func (loopback *LoopBack) Close() error {
-	if loopback.udpListener != nil {
-		return loopback.udpListener.Close()
+	if loopback.bindPortConn != nil {
+		if err := loopback.bindPortConn.Close(); err != nil {
+			return err
+		}
+	}
+
+	if loopback.mavp2p != nil && loopback.mavp2p.Process != nil {
+		if err := loopback.mavp2p.Process.Kill(); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -75,13 +86,13 @@ func (loopback *LoopBack) Send(message []byte) error {
 		err          error = nil
 	)
 
-	if loopback.udpListener == nil {
+	if loopback.bindPortConn == nil {
 		return fmt.Errorf("bind port not yet set. Skipping message")
 	}
-	if loopback.loopBackPort == nil {
+	if loopback.remotePort == nil {
 		return fmt.Errorf("loopback port not yet discovered. Skipping message")
 	}
-	if bytesWritten, err = loopback.udpListener.WriteToUDP(message, loopback.loopBackPort); err == nil {
+	if bytesWritten, err = loopback.bindPortConn.WriteToUDP(message, loopback.remotePort); err == nil {
 		if bytesWritten != len(message) {
 			err = fmt.Errorf("written bytes (%d) != message length (%d)", bytesWritten, len(message))
 		}
@@ -97,18 +108,18 @@ func (loopback *LoopBack) readMessageFromUDPPort() ([]byte, int) {
 		err        error        = nil
 	)
 
-	if nRead, senderAddr, err = loopback.udpListener.ReadFromUDP(buffer); err != nil {
+	if nRead, senderAddr, err = loopback.bindPortConn.ReadFromUDP(buffer); err != nil {
 		fmt.Println("Error while reading message from bind port" + err.Error())
 		return nil, 0
 	}
 
-	if loopback.loopBackPort == nil {
-		loopback.loopBackPort = &net.UDPAddr{IP: senderAddr.IP, Port: senderAddr.Port}
+	if loopback.remotePort == nil {
+		loopback.remotePort = &net.UDPAddr{IP: senderAddr.IP, Port: senderAddr.Port}
 		fmt.Println("Found sender port to bind port")
 	}
 
-	if senderAddr != nil && senderAddr.Port != loopback.loopBackPort.Port {
-		fmt.Println(fmt.Sprintf("expected port %d but got %d", loopback.loopBackPort.Port, senderAddr.Port))
+	if senderAddr != nil && senderAddr.Port != loopback.remotePort.Port {
+		fmt.Println(fmt.Sprintf("expected port %d but got %d", loopback.remotePort.Port, senderAddr.Port))
 	}
 
 	return buffer, nRead
