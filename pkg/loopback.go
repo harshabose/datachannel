@@ -3,9 +3,10 @@ package data
 import (
 	"context"
 	"fmt"
-	"github.com/pion/webrtc/v4"
 	"net"
 	"os/exec"
+
+	"github.com/pion/webrtc/v4"
 )
 
 type LoopBack struct {
@@ -37,9 +38,12 @@ func CreateLoopBack(ctx context.Context, options ...LoopBackOption) (*LoopBack, 
 }
 
 func (loopback *LoopBack) start() {
-	if err := loopback.mavp2p.Start(); err != nil {
-		fmt.Printf("Error starting mavp2p loopback: %v... Skipping\n", err)
+	if loopback.mavp2p != nil {
+		if err := loopback.mavp2p.Start(); err != nil {
+			fmt.Printf("Error starting mavp2p loopback: %v... Skipping\n", err)
+		}
 	}
+
 	go loopback.loop()
 }
 
