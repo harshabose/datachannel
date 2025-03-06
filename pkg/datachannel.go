@@ -2,12 +2,15 @@ package data
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 
 	"github.com/pion/webrtc/v4"
 )
 
 type DataChannel struct {
+	label       string
 	datachannel *webrtc.DataChannel
 	loopback    *LoopBack
 	ctx         context.Context
@@ -15,6 +18,7 @@ type DataChannel struct {
 
 func CreateDataChannel(ctx context.Context, label string, peerConnection *webrtc.PeerConnection, loopback *LoopBack) (*DataChannel, error) {
 	datachannel := &DataChannel{
+		label:       label,
 		datachannel: nil,
 		loopback:    loopback,
 		ctx:         ctx,
@@ -40,16 +44,25 @@ func CreateDataChannel(ctx context.Context, label string, peerConnection *webrtc
 	loopback.dataChannel = datachannel.datachannel
 	loopback.start()
 
-	return datachannel, nil
+	return datachannel.onOpen().onClose().onMessage(), nil
+}
+
+func (dataChannel *DataChannel) GetLabel() string {
+	return dataChannel.label
+}
+
+func (dataChannel *DataChannel) GetBindPort() int {
+	return dataChannel.loopback.bindPortConn.LocalAddr().(*net.UDPAddr).Port
 }
 
 func (dataChannel *DataChannel) Close() error {
-	if err := dataChannel.datachannel.Close(); err != nil {
-		return err
-	}
 	if err := dataChannel.loopback.Close(); err != nil {
 		return err
 	}
+	if err := dataChannel.datachannel.Close(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -90,20 +103,28 @@ func CreateDataChannels(ctx context.Context) (*DataChannels, error) {
 	}, nil
 }
 
-func (dataChannels *DataChannels) CreateDataChannel(label string, peerConnection *webrtc.PeerConnection, options ...LoopBackOption) error {
+func (dataChannels *DataChannels) CreateDataChannel(label string, peerConnection *webrtc.PeerConnection, options ...LoopBackOption) (*DataChannel, error) {
 	var (
 		loopback *LoopBack
 		err      error
 	)
 
 	if loopback, err = CreateLoopBack(dataChannels.ctx, options...); err != nil {
-		return err
+		return nil, err
 	}
 	if dataChannels.datachannel[label], err = CreateDataChannel(dataChannels.ctx, label, peerConnection, loopback); err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return dataChannels.datachannel[label], nil
+}
+
+func (dataChannels *DataChannels) GetDataChannel(label string) (*DataChannel, error) {
+	dataChannel, exists := dataChannels.datachannel[label]
+	if !exists {
+		return nil, errors.New("datachannel does not exists")
+	}
+	return dataChannel, nil
 }
 
 func (dataChannels *DataChannels) Close(label string) (err error) {
