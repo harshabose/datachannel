@@ -55,3 +55,30 @@ func WithMAVP2P(path string, serial string) LoopBackOption {
 		return nil
 	}
 }
+
+func WithMAVProxy(path string, deviceStr string) LoopBackOption {
+	return func(loopback *LoopBack) error {
+		if loopback.bindPortConn == nil {
+			return errors.New("bindPortConn not initialized, call WithBindPort or WithRandomBindPort first")
+		}
+
+		port := loopback.bindPortConn.LocalAddr().(*net.UDPAddr).Port
+
+		// MAVProxy uses --master for the connection string, and --out for output connections
+		// Format depends on the device: could be a serial port or network address
+		args := []string{
+			"--master", deviceStr,
+			"--out", fmt.Sprintf("udpout:127.0.0.1:%d", port),
+			"--daemon",
+		}
+
+		cmd := exec.Command(path, args...)
+
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		loopback.mavproxy = cmd
+
+		return nil
+	}
+}

@@ -15,6 +15,7 @@ type LoopBack struct {
 	bindPortConn *net.UDPConn
 	remotePort   *net.UDPAddr
 	mavp2p       *exec.Cmd
+	mavproxy     *exec.Cmd
 	ctx          context.Context
 }
 
@@ -42,6 +43,12 @@ func (l *LoopBack) start() {
 	if l.mavp2p != nil {
 		if err := l.mavp2p.Start(); err != nil {
 			fmt.Printf("Error starting mavp2p l: %v... Skipping\n", err)
+		}
+	}
+
+	if l.mavproxy != nil {
+		if err := l.mavproxy.Start(); err != nil {
+			fmt.Printf("error starting mavproxy: %v... skipping\n", err.Error())
 		}
 	}
 
