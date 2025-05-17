@@ -56,9 +56,7 @@ func (dataChannel *DataChannel) GetBindPort() int {
 }
 
 func (dataChannel *DataChannel) Close() error {
-	if err := dataChannel.loopback.Close(); err != nil {
-		return err
-	}
+	dataChannel.loopback.Close()
 	if err := dataChannel.datachannel.Close(); err != nil {
 		return err
 	}
