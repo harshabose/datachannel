@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os/exec"
@@ -37,109 +38,106 @@ func CreateLoopBack(ctx context.Context, options ...LoopBackOption) (*LoopBack, 
 	return loopback, nil
 }
 
-func (loopback *LoopBack) start() {
-	if loopback.mavp2p != nil {
-		if err := loopback.mavp2p.Start(); err != nil {
-			fmt.Printf("Error starting mavp2p loopback: %v... Skipping\n", err)
+func (l *LoopBack) start() {
+	if l.mavp2p != nil {
+		if err := l.mavp2p.Start(); err != nil {
+			fmt.Printf("Error starting mavp2p l: %v... Skipping\n", err)
 		}
 	}
 
-	go loopback.loop()
+	go l.loop()
 }
 
-func (loopback *LoopBack) loop() {
+func (l *LoopBack) loop() {
 	var (
 		buffer []byte
 		nRead  = 0
 	)
 
-	defer loopback.Close()
+	defer l.Close()
 
 	for {
 		select {
-		case <-loopback.ctx.Done():
+		case <-l.ctx.Done():
 			return
 		default:
-
-			if buffer, nRead = loopback.readMessageFromUDPPort(); nRead > 0 && nRead < 1025 {
-				loopback.sendMessageThroughDataChannel(buffer[:nRead])
+			if buffer, nRead = l.readMessageFromUDPPort(); nRead > 0 && nRead < 1025 {
+				if err := l.sendMessageThroughDataChannel(buffer[:nRead]); err != nil {
+					fmt.Println("error in l; err:", err.Error())
+					continue
+				}
+				fmt.Println("sent")
 			}
 		}
 	}
 }
 
-func (loopback *LoopBack) Close() error {
-	if loopback.bindPortConn != nil {
-		if err := loopback.bindPortConn.Close(); err != nil {
-			return err
+func (l *LoopBack) Close() {
+	if l.bindPortConn != nil {
+		if err := l.bindPortConn.Close(); err != nil {
+			fmt.Println("error while closing the l; err:", err.Error())
 		}
 	}
 
-	if loopback.mavp2p != nil && loopback.mavp2p.Process != nil {
-		if err := loopback.mavp2p.Process.Kill(); err != nil {
-			return err
+	if l.mavp2p != nil && l.mavp2p.Process != nil {
+		if err := l.mavp2p.Process.Kill(); err != nil {
+			fmt.Println("error while closing the l; err:", err.Error())
 		}
+	}
+}
+
+func (l *LoopBack) Send(message []byte) error {
+	if l.bindPortConn == nil {
+		return fmt.Errorf("bind port not yet set. Skipping message")
+	}
+	if l.remotePort == nil {
+		return fmt.Errorf("l port not yet discovered. Skipping message")
+	}
+	bytesWritten, err := l.bindPortConn.WriteToUDP(message, l.remotePort)
+	if bytesWritten != len(message) {
+		return fmt.Errorf("written bytes (%d) != message length (%d)", bytesWritten, len(message))
+	}
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (loopback *LoopBack) Send(message []byte) error {
-	var (
-		bytesWritten       = 0
-		err          error = nil
-	)
+func (l *LoopBack) readMessageFromUDPPort() ([]byte, int) {
+	buffer := make([]byte, 1024)
 
-	if loopback.bindPortConn == nil {
-		return fmt.Errorf("bind port not yet set. Skipping message")
-	}
-	if loopback.remotePort == nil {
-		return fmt.Errorf("loopback port not yet discovered. Skipping message")
-	}
-	if bytesWritten, err = loopback.bindPortConn.WriteToUDP(message, loopback.remotePort); err == nil {
-		if bytesWritten != len(message) {
-			err = fmt.Errorf("written bytes (%d) != message length (%d)", bytesWritten, len(message))
-		}
-	}
-	return err
-}
-
-func (loopback *LoopBack) readMessageFromUDPPort() ([]byte, int) {
-	var (
-		buffer     []byte       = make([]byte, 1024)
-		nRead                   = 0
-		senderAddr *net.UDPAddr = nil
-		err        error        = nil
-	)
-
-	if nRead, senderAddr, err = loopback.bindPortConn.ReadFromUDP(buffer); err != nil {
+	nRead, senderAddr, err := l.bindPortConn.ReadFromUDP(buffer)
+	if err != nil {
 		fmt.Println("Error while reading message from bind port" + err.Error())
 		return nil, 0
 	}
 
-	if loopback.remotePort == nil {
-		loopback.remotePort = &net.UDPAddr{IP: senderAddr.IP, Port: senderAddr.Port}
+	if l.remotePort == nil {
+		l.remotePort = &net.UDPAddr{IP: senderAddr.IP, Port: senderAddr.Port}
 		fmt.Println("Found sender port to bind port")
 	}
 
-	if senderAddr != nil && senderAddr.Port != loopback.remotePort.Port {
-		fmt.Println(fmt.Sprintf("expected port %d but got %d", loopback.remotePort.Port, senderAddr.Port))
+	if senderAddr != nil && senderAddr.Port != l.remotePort.Port {
+		fmt.Println(fmt.Sprintf("expected port %d but got %d", l.remotePort.Port, senderAddr.Port))
 	}
 
 	return buffer, nRead
 }
 
-func (loopback *LoopBack) sendMessageThroughDataChannel(message []byte) {
-	var err error = nil
+func (l *LoopBack) sendMessageThroughDataChannel(message []byte) error {
+	if l.dataChannel == nil {
+		return errors.New("datachannel not yet set")
+	}
 
-	if loopback.dataChannel == nil {
-		fmt.Println("datachannel not yet set")
-		return
-	}
-	if loopback.dataChannel.ReadyState() == webrtc.DataChannelStateOpen {
-		if err = loopback.dataChannel.Send(message); err != nil {
-			fmt.Println("failed to send data: " + err.Error())
+	if l.dataChannel.ReadyState() == webrtc.DataChannelStateOpen {
+		err := l.dataChannel.Send(message)
+		if err != nil {
+			return fmt.Errorf("failed to send data through data channel; err: %s", err.Error())
 		}
-		return
+
+		return nil
 	}
+
+	return errors.New("datachannel not in ready mode")
 }
