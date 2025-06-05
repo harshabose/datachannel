@@ -73,7 +73,6 @@ func (l *LoopBack) loop() {
 					fmt.Println("error in l; err:", err.Error())
 					continue
 				}
-				// fmt.Println("sent")
 			}
 		}
 	}

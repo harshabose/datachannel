@@ -4,23 +4,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 
 	"github.com/pion/webrtc/v4"
+
+	"github.com/harshabose/simple_webrtc_comm/mediasink/pkg"
 )
 
 type DataChannel struct {
 	label       string
 	datachannel *webrtc.DataChannel
-	loopback    *LoopBack
+	sink        mediasink.Host
 	ctx         context.Context
 }
 
-func CreateDataChannel(ctx context.Context, label string, peerConnection *webrtc.PeerConnection, loopback *LoopBack) (*DataChannel, error) {
+func CreateDataChannel(ctx context.Context, label string, peerConnection *webrtc.PeerConnection, sink mediasink.Host) (*DataChannel, error) {
 	datachannel := &DataChannel{
 		label:       label,
 		datachannel: nil,
-		loopback:    loopback,
+		sink:        sink,
 		ctx:         ctx,
 	}
 	var (
@@ -41,8 +42,13 @@ func CreateDataChannel(ctx context.Context, label string, peerConnection *webrtc
 		return nil, err
 	}
 
-	loopback.dataChannel = datachannel.datachannel
-	loopback.start()
+	s, ok := datachannel.sink.(mediasink.CanCallBackPayload)
+	if !ok {
+		return nil, errors.New("interfaces mismatch")
+	}
+
+	s.SetOnPayloadCallback(datachannel.send)
+	go datachannel.sink.Connect(datachannel.ctx)
 
 	return datachannel.onOpen().onClose().onMessage(), nil
 }
@@ -51,12 +57,8 @@ func (dataChannel *DataChannel) GetLabel() string {
 	return dataChannel.label
 }
 
-func (dataChannel *DataChannel) GetBindPort() int {
-	return dataChannel.loopback.bindPortConn.LocalAddr().(*net.UDPAddr).Port
-}
-
 func (dataChannel *DataChannel) Close() error {
-	dataChannel.loopback.Close()
+	dataChannel.sink.Close()
 	if err := dataChannel.datachannel.Close(); err != nil {
 		return err
 	}
@@ -78,9 +80,13 @@ func (dataChannel *DataChannel) onClose() *DataChannel {
 	return dataChannel
 }
 
+func (dataChannel *DataChannel) send(p []byte) error {
+	return dataChannel.datachannel.Send(p)
+}
+
 func (dataChannel *DataChannel) onMessage() *DataChannel {
 	dataChannel.datachannel.OnMessage(func(message webrtc.DataChannelMessage) {
-		if err := dataChannel.loopback.Send(message.Data); err != nil {
+		if err := dataChannel.sink.Write(message.Data); err != nil {
 			fmt.Println("Error sending data: " + err.Error())
 		}
 	})
@@ -101,18 +107,13 @@ func CreateDataChannels(ctx context.Context) (*DataChannels, error) {
 	}, nil
 }
 
-func (dataChannels *DataChannels) CreateDataChannel(label string, peerConnection *webrtc.PeerConnection, options ...LoopBackOption) (*DataChannel, error) {
-	var (
-		loopback *LoopBack
-		err      error
-	)
+func (dataChannels *DataChannels) CreateDataChannel(label string, peerConnection *webrtc.PeerConnection, sink *mediasink.Sink) (*DataChannel, error) {
+	channel, err := CreateDataChannel(dataChannels.ctx, label, peerConnection, sink.GetStream().GetHost())
+	if err != nil {
+		return nil, err
+	}
 
-	if loopback, err = CreateLoopBack(dataChannels.ctx, options...); err != nil {
-		return nil, err
-	}
-	if dataChannels.datachannel[label], err = CreateDataChannel(dataChannels.ctx, label, peerConnection, loopback); err != nil {
-		return nil, err
-	}
+	dataChannels.datachannel[label] = channel
 
 	return dataChannels.datachannel[label], nil
 }
